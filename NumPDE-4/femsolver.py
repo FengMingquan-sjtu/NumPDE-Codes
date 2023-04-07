@@ -112,10 +112,9 @@ class FEMSolerV1:
         Input:
             kappa,f,g: functions, whose input is (x,y) denoted by a (2, n) array, and output is (n,) array.
             visualize: boolean flag for plt 3d result.
-            u_exact: exact solution function for ploting.
+            u_exact: function, exact solution, whose input is (x,y)
         Output:
-            u: the nodal solution, (n_nodes,) array.
-            nodes: the coordinates of nodes, (n_nodes, 2) array.
+            u: (n_nodes,) array, the nodal solution, .
         '''
         # -------- Assemble the A matrix (LHS)  --------  
         a_builder = MatrixBuilder()
@@ -169,6 +168,18 @@ class FEMSolerV1:
         uhat = sla.spsolve(A.tocsr(), rhs)
         u = uhat + u0  #reconstruct solution u from \hat u and u_0
 
+        if visualize:
+            self.visualize(u, u_exact)
+
+        return u
+    
+    def visualize(self, u, u_exact):
+        '''
+        Input: 
+            u: (n_nodes,) array, the nodal solution, .
+            u_exact: function, exact solution, whose input is (x,y)
+        Output: None
+        '''
         # -------- Evaluate & Visualize  -------- 
         # test grid points
         X = np.linspace(self.x_lb, self.x_ub, 100)
@@ -183,27 +194,25 @@ class FEMSolerV1:
             print("Mean Abs Error=", err)
 
         # visualization
-        if visualize:
+        
+        fig = plt.figure(figsize=(8,8))
+        ax1 = fig.add_subplot(projection='3d')
+        ax1.plot_trisurf(self.nodes[:,0], self.nodes[:,1], u, triangles=self.elements, cmap=plt.cm.jet, linewidth=0.2)
+        ax1.set_xlabel('X')
+        ax1.set_ylabel('Y')
+        ax1.set_zlabel('U')
+        ax1.set_title("FEM solution")
+        if not u_exact is None:
             fig = plt.figure(figsize=(8,8))
-            ax1 = fig.add_subplot(projection='3d')
-            ax1.plot_trisurf(self.nodes[:,0], self.nodes[:,1], u, triangles=self.elements, cmap=plt.cm.jet, linewidth=0.2)
-            ax1.set_xlabel('X')
-            ax1.set_ylabel('Y')
-            ax1.set_zlabel('U')
-            ax1.set_title("FEM solution")
-            if not u_exact is None:
-                fig = plt.figure(figsize=(8,8))
-                ax2 = fig.add_subplot(projection='3d')
-                
-                ax2.plot_surface(X, Y, u_exact((X,Y)), cmap=plt.cm.jet, linewidth=0.1)
-                ax2.set_xlabel('X')
-                ax2.set_ylabel('Y')
-                ax2.set_zlabel('U')
-                ax2.set_title("Exact solution")
-            plt.show()
+            ax2 = fig.add_subplot(projection='3d')
+            
+            ax2.plot_surface(X, Y, u_exact((X,Y)), cmap=plt.cm.jet, linewidth=0.1)
+            ax2.set_xlabel('X')
+            ax2.set_ylabel('Y')
+            ax2.set_zlabel('U')
+            ax2.set_title("Exact solution")
+        plt.show()
         
-        
-        return u, self.nodes
 
 
 def test_V1_case1():
