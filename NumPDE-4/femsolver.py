@@ -75,16 +75,13 @@ class MatrixBuilder:  #sparse matrix helper
 
 
 # --------- FEM Solver V1 --------- 
-class FEMSolerV1:
-    ''' FEM solver for poission equation:
+class FEMSolverV1:
+    ''' FEM solver for bilinear poission equation:
             \grad kappa(x,y) \grad u = f.
                                 u_0  = g.
     '''
     def __init__(self):
-        #gradient of 1-order-poly basis functions.
-        self.dbasis = np.array([
-            [-1, 1, 0],  # dphi/dr
-            [-1, 0, 1]]) # dphi/ds
+        pass
     def setDomain(self,bound_points, bc_points):
         ''' set the domain, determine mesh and boundary. Only allow rectangular domain.
         Input:
@@ -108,7 +105,7 @@ class FEMSolerV1:
 
 
     def solve(self, kappa, f, g, visualize=True, u_exact=None):
-        ''' solve the given poisson equation
+        ''' solve the bilinear poisson equation
         Input:
             kappa,f,g: functions, whose input is (x,y) denoted by a (2, n) array, and output is (n,) array.
             visualize: boolean flag for plt 3d result.
@@ -116,6 +113,11 @@ class FEMSolerV1:
         Output:
             u: (n_nodes,) array, the nodal solution, .
         '''
+        #gradient of 1-order-poly basis functions.
+        self.dbasis = np.array([
+            [-1, 1, 0],  # dphi/dr
+            [-1, 0, 1]]) # dphi/ds
+
         # -------- Assemble the A matrix (LHS)  --------  
         a_builder = MatrixBuilder()
 
@@ -212,7 +214,44 @@ class FEMSolerV1:
             ax2.set_zlabel('U')
             ax2.set_title("Exact solution")
         plt.show()
-        
+
+
+class FEMSolverV2(FEMSolverV1):
+    ''' FEM solver for non-bilinear poission equation:
+            \grad kappa(u) \grad u = f.
+                                u_0  = g.
+    '''
+    def __init__(self):
+        super(FEMSolverV2).__init__()
+
+    def solve_nonlinear_picard(self, kappa_u, f, g, visualize=True, u_exact=None):
+        ''' solve the bilinear poisson equation, via picard iteration
+        Input:
+            kappa_u: function whose input is u, denoted by an (n,) array.
+            f,g: functions, whose input is (x,y) denoted by a (2, n) array, and output is (n,) array.
+            visualize: boolean flag for plt 3d result.
+            u_exact: function, exact solution, whose input is (x,y)
+        Output:
+            u: (n_nodes,) array, the nodal solution, .
+        '''
+        tol = 1e-5
+        uk = np.random.rand(len(self.nodes),)
+        max_iter = 25
+        for it in range(1, 1+max_iter):
+            kappa_uk = lambda xvec: kappa_u(LinearNDInterpolator(self.nodes, uk)(xvec))
+            uk_1 = self.solve(kappa_uk, f, g, visualize=False)
+            eps = np.linalg.norm(uk - uk_1, ord=np.Inf)
+            if eps < tol:
+                break
+            else:
+                uk = uk_1 #update u, go to next iteration.
+
+            print("iter=", it, ", eps=", eps)
+        u = uk_1
+        if visualize:
+            self.visualize(u, u_exact)
+
+        return u
 
 
 def test_V1_case1():
@@ -235,7 +274,7 @@ def test_V1_case1():
         x, y = xvec
         return 1 * (1 - x**2) 
 
-    s = FEMSolerV1()
+    s = FEMSolverV1()
     s.setDomain([(-1, -1), (1, -1), (1, 1), (-1, 1)], [(-9999, -1)])
     s.solve(kappa, f, g)
 
@@ -256,10 +295,34 @@ def test_V1_case2():
     g = sym.lambdify([(x, y)], g, 'numpy')
     u = sym.lambdify([(x, y)], u, 'numpy')
 
-    s = FEMSolerV1()
+    s = FEMSolverV1()
     s.setDomain([(-1, -1), (1, -1), (1, 1), (-1, 1)], [(-1, -1), (1, -1), (1, 1), (-1, 1)])
     s.solve(kappa, f, g, u_exact=u)
 
 
+def test_V2_case1():
+    # Another example
+    x, y, u_ = sym.symbols('x y u_')
+    u = 1 + x**2 + y**2
+    kappa_u = -2*(u_) 
+    kappa_xy = kappa_u.subs(u_, u)
+    f = - sym.diff(kappa_xy*sym.diff(u, x), x) - sym.diff(kappa_xy*sym.diff(u, y), y)
+    f = sym.simplify(f)
+    g = u
+    print('kappa_xy=',kappa_xy)
+    print('kappa_u=',kappa_u)
+    print("f=",f)
+    print("u_exact=", u)
+
+    # convert to numpy funcs
+    kappa_xy = sym.lambdify([(x, y)], kappa_xy, 'numpy')
+    kappa_u = sym.lambdify([(u_,)], kappa_u, 'numpy')
+    f = sym.lambdify([(x, y)], f, 'numpy')
+    g = sym.lambdify([(x, y)], g, 'numpy')
+    u_exact = sym.lambdify([(x, y)], u, 'numpy')
+    s = FEMSolverV2()
+    s.setDomain([(-1, -1), (1, -1), (1, 1), (-1, 1)], [(-1, -1), (1, -1), (1, 1), (-1, 1)])
+    s.solve_nonlinear_picard(kappa_u, f, g, visualize=True, u_exact=u_exact)
+
 if __name__ == "__main__":
-    test_V1_case2()
+    test_V2_case1()
