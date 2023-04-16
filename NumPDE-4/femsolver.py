@@ -79,6 +79,9 @@ class FEMSolverV1:
     ''' FEM solver for bilinear poission equation:
             \grad kappa(x,y) \grad u = f.
                                 u_0  = g.
+        And more general bilinear pde:
+            lambda(x,y)u + \grad kappa(x,y) \grad u = f.
+                                u_0  = g.
     '''
     def __init__(self):
         pass
@@ -104,10 +107,10 @@ class FEMSolverV1:
             self.is_g_boundary |= (np.abs(X-x) < tol) | (np.abs(Y-y) < tol)
 
 
-    def solve(self, kappa, f, g, visualize=True, u_exact=None):
+    def solve(self, kappa, f, g, lambda_=None ,visualize=True, u_exact=None):
         ''' solve the bilinear poisson equation
         Input:
-            kappa,f,g: functions, whose input is (x,y) denoted by a (2, n) array, and output is (n,) array.
+            kappa,f,g, lambda_: functions, whose input is (x,y) denoted by a (2, n) array, and output is (n,) array.
             visualize: boolean flag for plt 3d result.
             u_exact: function, exact solution, whose input is (x,y)
         Output:
@@ -132,6 +135,8 @@ class FEMSolverV1:
             dphi = invJT @ self.dbasis
 
             Aelem = kappa(centroid) * (detJ / 2.0) * dphi.T @ dphi
+            if not lambda_ is None:
+                Aelem += lambda_(centroid) * (detJ / 18.0)
 
             a_builder.add(vert_indices, vert_indices, Aelem)
         A = a_builder.coo_matrix().tocsr().tocoo() #Duplicate entries will be summed
