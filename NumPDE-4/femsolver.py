@@ -9,7 +9,8 @@ from mpl_toolkits.mplot3d import Axes3D
 import matplotlib.pyplot as plt
 import meshpy.triangle as triangle
 from scipy.interpolate import LinearNDInterpolator
-
+from matplotlib import animation
+from IPython.display import HTML
 # --------- Mesh Generator --------- 
 
 def make_mesh(points):
@@ -77,10 +78,10 @@ class MatrixBuilder:  #sparse matrix helper
 # --------- FEM Solver V1 --------- 
 class FEMSolverV1:
     ''' FEM solver for bilinear poission equation:
-            \grad kappa(x,y) \grad u = f.
+            - \grad kappa(x,y) \grad u = f.
                                 u_0  = g.
         And more general bilinear pde:
-            lambda(x,y)u + \grad kappa(x,y) \grad u = f.
+            lambda(x,y)u - \grad kappa(x,y) \grad u = f.
                                 u_0  = g.
     '''
     def __init__(self):
@@ -223,14 +224,14 @@ class FEMSolverV1:
 
 class FEMSolverV2(FEMSolverV1):
     ''' FEM solver for non-bilinear poission equation:
-            \grad kappa(u) \grad u = f.
+            - \grad kappa(u) \grad u = f.
                                 u_0  = g.
     '''
     def __init__(self):
         super(FEMSolverV2).__init__()
 
     def solve_nonlinear_picard(self, kappa_u, f, g, visualize=True, u_exact=None):
-        ''' solve the bilinear poisson equation, via picard iteration
+        ''' solve the non-bilinear poisson equation, via picard iteration
         Input:
             kappa_u: function whose input is u, denoted by an (n,) array.
             f,g: functions, whose input is (x,y) denoted by a (2, n) array, and output is (n,) array.
@@ -251,13 +252,101 @@ class FEMSolverV2(FEMSolverV1):
             else:
                 uk = uk_1 #update u, go to next iteration.
 
-            print("iter=", it, ", eps=", eps)
+            #print("iter=", it, ", eps=", eps)
         u = uk_1
         if visualize:
             self.visualize(u, u_exact)
 
         return u
 
+
+class FEMSolverV3(FEMSolverV2):
+    ''' FEM solver for time-dependent bilinear poission equation:
+            du/dt - \grad kappa \grad u   = f.
+                                    u_bound  = g.
+                                    u_0      = I.
+    '''
+    def __init__(self):
+        super(FEMSolverV3).__init__()
+    
+    def solve_time_dep(self, kappa, f, g, I, N_t, dt, visualize=True, u_exact=None):
+        ''' solve the time-dependent bilinear poisson equation, via picard iteration
+        Input:
+            kappa,f,g: functions, whose input is (t,x,y) denoted by a (3, n) array, and output is (n,) array.
+            I: functions, whose input is (x,y) denoted by a (2, n) array, and output is (n,) array.
+            N_t: Integer, num of time steps.
+            dt: float, time step size.
+            visualize: boolean flag for plt 3d result.
+            u_exact: function, exact solution, whose input is (t,x,y)
+        Output:
+            u: (N_t, n_nodes,) 2d array, the nodal solution at [1*dt, ..., N_t*dt] time steps.
+        '''
+        u_k = I(self.nodes.T) #initial u
+        u = np.zeros((N_t, len(self.nodes)))
+        lambda_ = lambda xcev: 1
+        for k in range(N_t):
+            g_k = lambda xvec: g((dt*k, xvec[0], xvec[1]))
+            f_k = lambda xvec: LinearNDInterpolator(self.nodes, u_k)(xvec) + dt* f((dt*k, xvec[0], xvec[1]))
+            kappa_k = lambda xvec: dt* kappa((dt*k, xvec[0], xvec[1]))
+            u_k = u[k,:] = self.solve(kappa_k, f_k, g_k, lambda_=lambda_,visualize=False)
+        if visualize and not u_exact is None:
+            self.visualize(u, u_exact, dt)
+
+        return u
+
+
+    def visualize(self, u, u_exact, dt):
+        '''
+        Input: 
+            u: (N_t, n_nodes) array, the nodal solution,
+            u_exact: function, exact solution, whose input is (t,x,y)
+            dt: float, the time step size .
+            
+        Output: None
+        '''
+        # -------- Evaluate & Visualize  -------- 
+        # test grid points
+        N_t = len(u)
+        X = np.linspace(self.x_lb, self.x_ub, 100)
+        Y = np.linspace(self.y_lb, self.y_ub, 100)
+        X, Y = np.meshgrid(X, Y)
+
+        # MAE on grid points
+        if not u_exact is None:
+            errs = []
+            for k in range(N_t):
+                u_interp = LinearNDInterpolator(self.nodes, u[k])(X,Y)
+                err = u_interp -  u_exact((k*dt,X,Y))
+                errs.append(err)
+            print("Mean Abs Error=", np.abs(np.array(errs)).mean())
+        
+        fig1 = plt.figure()
+        ax1 = fig1.add_subplot(projection='3d')
+        fig2 = plt.figure()
+        ax2 = fig2.add_subplot(projection='3d')
+
+        u_list_1 = u 
+        #u_list_2 = [u_exact((k*dt,X,Y)) for k in range(N_t)]
+        u_list_2 = np.abs(np.array(errs))
+
+        def update1(k, u_list_1, ):
+            ax1.clear()
+            ax1.set_title("Time={:4f}".format(k*dt))
+            plot1 = ax1.plot_trisurf(self.nodes[:,0], self.nodes[:,1], u_list_1[k], triangles=self.elements, cmap=plt.cm.jet)
+            return plot1,
+
+        def update2(k, u_list_2):
+            ax2.clear()
+            ax2.set_title("Time={:4f}".format(k*dt))
+            plot2 = ax2.plot_surface(X, Y, u_list_2[k], cmap=plt.cm.jet)
+            return plot2,
+
+        ani1 = animation.FuncAnimation(fig1, update1, N_t, fargs=(u_list_1,), interval=50, blit=False)
+        ani2 = animation.FuncAnimation(fig2, update2, N_t, fargs=(u_list_2,), interval=50, blit=False)
+        #ani.save('matplot003.gif', writer='imagemagick')
+        plt.xlabel('X')
+        plt.ylabel('Y')
+        plt.show()
 
 def test_V1_case1():
     def kappa(xvec):  #left-hand-side(lhs) non-linear func 
@@ -329,5 +418,31 @@ def test_V2_case1():
     s.setDomain([(-1, -1), (1, -1), (1, 1), (-1, 1)], [(-1, -1), (1, -1), (1, 1), (-1, 1)])
     s.solve_nonlinear_picard(kappa_u, f, g, visualize=True, u_exact=u_exact)
 
+def test_V3_case1():
+    t, x, y = sym.symbols('t, x y')
+    u = sym.sin(t)*(1 + x**2) + x - y**2
+    kappa = sym.sqrt(t+1e-4) + sym.sin(x) + sym.cos(y)
+    lambda_ = 1
+    f = sym.diff(u, t) - sym.diff(kappa*sym.diff(u, x), x) - sym.diff(kappa*sym.diff(u, y), y)
+    f = sym.simplify(f)
+    g = u
+    I = sym.simplify(u.subs(t, 0))
+    print('kappa=',kappa)
+    print('I=',I)
+    print("f=",f)
+    print("u_exact=", u)
+
+    # convert to numpy funcs
+    kappa = sym.lambdify([(t, x, y)], kappa, 'numpy')
+    f = sym.lambdify([(t, x, y)], f, 'numpy')
+    I = sym.lambdify([(x, y)], I, 'numpy')
+    g = sym.lambdify([(t, x, y)], g, 'numpy')
+    u_exact = sym.lambdify([(t, x, y)], u, 'numpy')
+
+    #solve and visualize
+    s = FEMSolverV3()
+    s.setDomain([(-1, -1), (1, -1), (1, 1), (-1, 1)], [(-1, -1), (1, -1), (1, 1), (-1, 1)])
+    s.solve_time_dep(kappa, f, g, I, N_t=30, dt=0.01, u_exact=u_exact)
 if __name__ == "__main__":
-    test_V2_case1()
+    test_V3_case1()
+    
